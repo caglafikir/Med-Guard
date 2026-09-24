@@ -1,59 +1,120 @@
 # Med-Guard
 
-Med-Guard, bir sağlık/tıp asistanına gelen kullanıcı isteklerini **güvenli (safe) / güvensiz (unsafe)** olarak sınıflandıran ve isteğin **niyetini (intent)** dokuz alt kategoriye ayıran bir güvenlik (guardrail) modelidir. Amaç; kendine zarar verme riski, zararlı tedavi önerisi talebi, manipülasyon gibi riskli girdileri, iyi huylu genel sorulardan ve kronik/akut tıbbi durumlardan ayırt edebilmektir.
+Med-Guard is a safety guardrail model for a healthcare or medical assistant. It classifies incoming user requests as **safe** or **unsafe**, and assigns each request to one of nine **intent** categories. The goal is to distinguish risky inputs, such as self-harm risk, harmful treatment requests, and manipulation, from benign general questions and chronic or acute medical situations.
 
-## Yöntem
+## Method
 
-Model, çok dilli cümle gömme (sentence embedding) vektörleri üzerine kurulu bir **işaretli graf (signed graph) tabanlı embedding propagation** yaklaşımı kullanır:
+The model uses a **signed-graph embedding propagation** approach built on multilingual sentence embeddings:
 
-1. **Embedding** — İstekler `paraphrase-multilingual-mpnet-base-v2` ile vektörleştirilir (`sentence-transformers`).
-2. **İşaretli graf inşası** — Eğitim setindeki örnekler arasında kosinüs benzerliğine göre k-NN grafı kurulur:
-   - **Pozitif kenarlar**: aynı etikete sahip ve yüksek benzerlikteki örnekler arasında (pull).
-   - **Negatif kenarlar**: önceden tanımlı "karıştırılabilir" niyet çiftleri (`confusion_pairs`) arasında, zıt etiketli ve yüksek benzerlikteki zor negatifler arasında (push).
-3. **Sinir ağı** — Paylaşılan bir gövdeden (`Linear → ReLU → Dropout`) iki başa dallanan bir ağ: güvenlik (binary) başı ve niyet (9 sınıf) başı.
-4. **Embedding propagation** — Öğrenilen özellikler, pozitif graf üzerinden yayılır (pull) ve negatif graf ile bu yayılım geri bastırılır (push); böylece benzer örnekler etiket uzayında birbirine yaklaşır, çelişen örnekler birbirinden uzaklaşır.
-5. **Kayıp fonksiyonu** — Ağırlıklandırılmış BCE (güvenlik), sınıf ağırlıklı CE (niyet), pull-loss, margin tabanlı push-loss ve propagation-consistency loss'un toplamı.
-6. **Inductive çıkarım** — Test/kalibrasyon setindeki görülmemiş örnekler için, eğitim setindeki en yakın komşulara dayalı bir mahalle inşa edilip aynı propagation mantığı uygulanır (transduktif değil, inductive).
+1. **Embedding** - Requests are encoded with `paraphrase-multilingual-mpnet-base-v2` (`sentence-transformers`).
+2. **Signed graph construction** - A cosine-similarity k-NN graph is built over the training examples:
+   - **Positive edges**: high-similarity examples with the same safety label (pull).
+   - **Negative edges**: high-similarity, opposite-label hard negatives whose intent pair appears in the predefined `confusion_pairs` list (push).
+3. **Neural network** - A shared `Linear -> ReLU -> Dropout` trunk branches into a binary safety head and a nine-class intent head.
+4. **Embedding propagation** - Learned features are pulled toward similar examples through the positive graph and pushed away from conflicting examples through the negative graph.
+5. **Loss function** - The total objective combines weighted BCE for safety, class-weighted CE for intent, pull loss, margin-based push loss, and propagation-consistency loss.
+6. **Inductive inference** - For unseen calibration or test examples, a neighborhood is built from the closest training examples and the same propagation idea is applied inductively rather than transductively.
 
-## Niyet (intent) kategorileri
+## Propagation equations
 
-| Sınıf | Açıklama |
+Let $H \in \mathbb{R}^{n \times d}$ be the learned node representations, $A_{+}$ the row-normalized positive adjacency matrix, and $A_{-}$ the row-normalized negative adjacency matrix. The propagation parameters are `alpha_pos`, `alpha_neg`, `K`, and `neg_lambda`.
+
+### Positive propagation (pull)
+
+The positive graph repeatedly mixes each representation with messages from same-label neighbors while retaining part of the original representation:
+
+$$
+H_{+}^{(0)} = H_0 = H
+$$
+
+$$
+H_{+}^{(k+1)} = (1 - \alpha_{+})H_0 + \alpha_{+}A_{+}H_{+}^{(k)},
+\qquad k = 0, \ldots, K-1
+$$
+
+After the iterative updates, one final positive message is applied:
+
+$$
+H_{+} = (1 - \alpha_{+})H_0 + \alpha_{+}A_{+}H_{+}^{(K)}
+$$
+
+Here, a larger $\alpha_{+}$ gives neighbors more influence, while the residual term preserves the original node features.
+
+### Negative propagation (push)
+
+The negative graph produces a message from conflicting neighbors. Its difference from the positively propagated representation is scaled to form a repulsive correction:
+
+$$
+M_{-} = A_{-}H_{+}
+$$
+
+$$
+\Delta_{-} = \alpha_{-}(M_{-} - H_{+})
+$$
+
+The final representation subtracts this correction, controlled by `neg_lambda`:
+
+$$
+H_{\text{final}} = H_{+} - \lambda_{-}\Delta_{-}
+$$
+
+In the implementation, the negative correction is computed without gradient tracking, so propagation changes the representation used for downstream prediction without introducing a separate gradient path through the negative message.
+
+### Inductive propagation
+
+For an unseen query representation $h_q$, let $\mathcal{N}(q)$ be its training neighbors and let $w_{qi}$ be their normalized similarity weights. The inductive update is:
+
+$$
+m_{+}(q) = \sum_{i \in \mathcal{N}(q)} w_{qi}h_{+,i},
+\qquad
+\delta_{-}(q) = \sum_{i \in \mathcal{N}(q)} w_{qi}\Delta_{-,i}
+$$
+
+$$
+h_{q,\text{final}} = (1 - \alpha_{+})h_q + \alpha_{+}m_{+}(q) - \lambda_{-}\alpha_{-}\delta_{-}(q)
+$$
+
+If no training neighbor passes the similarity threshold, the query representation is left unchanged.
+
+## Intent categories
+
+| Class | Description |
 |---|---|
-| `benign_general` | Genel, zararsız istek |
-| `medication_related` | İlaçla ilgili istek |
-| `mild_emotional_stress` | Hafif duygusal sıkıntı |
-| `chronic_condition` | Kronik durumla ilgili istek |
-| `non_acute_injury` | Akut olmayan yaralanma |
-| `acute_medical_risk` | Akut tıbbi risk |
-| `harmful_treatment` | Zararlı tedavi talebi |
-| `manipulation` | Manipülatif istek |
-| `self_harm_risk` | Kendine zarar verme riski |
+| `benign_general` | General, harmless request |
+| `medication_related` | Medication-related request |
+| `mild_emotional_stress` | Mild emotional distress |
+| `chronic_condition` | Request related to a chronic condition |
+| `non_acute_injury` | Non-acute injury |
+| `acute_medical_risk` | Acute medical risk |
+| `harmful_treatment` | Harmful treatment request |
+| `manipulation` | Manipulative request |
+| `self_harm_risk` | Self-harm risk |
 
-## Proje yapısı
+## Project structure
 
 ```
 Med-Guard/
 ├── data/
-│   └── dataset_shuffled.csv  # Veri seti
+│   └── dataset_shuffled.csv  # Dataset
 ├── notebooks/
-│   └── guard.ipynb       # İnce orkestrasyon: src/ modüllerini çağırır, sonuçları analiz eder
+│   └── guard.ipynb       # Thin orchestration layer for analysis
 ├── src/
-│   ├── config.py         # Hiperparametreler, etiket/niyet haritaları
-│   ├── data.py            # Veri yükleme, embedding çıkarımı, train/cal/test ayrımı
-│   ├── graph.py           # İşaretli graf (signed graph) inşası
-│   ├── propagation.py     # Transduktif ve inductive embedding propagation
-│   ├── model.py            # SignedGraphSafetyModel mimarisi
-│   ├── losses.py           # Pull/push ve propagation-consistency kayıpları
-│   ├── train.py             # Eğitim döngüsü
-│   └── evaluate.py          # Çıkarım (inference)
+│   ├── config.py         # Hyperparameters and label/intent mappings
+│   ├── data.py            # Data loading, embeddings, and train/calibration/test splits
+│   ├── graph.py           # Signed graph construction
+│   ├── propagation.py     # Transductive and inductive embedding propagation
+│   ├── model.py            # SignedGraphSafetyModel architecture
+│   ├── losses.py           # Pull, push, and propagation-consistency losses
+│   ├── train.py             # Training loop
+│   └── evaluate.py          # Inference and evaluation
 ├── requirements.txt
 ├── LICENSE
 └── README.md
 ```
 
-Ağır/tekrar kullanılabilir mantık `src/` altında modüller halinde tutulur; `notebooks/guard.ipynb` bu modülleri import edip çalıştıran ve sonuçları (metrikler, propagation etkisi, yanlış negatif analizi) satır satır gösteren ince bir katmandır.
+Reusable project logic lives in modules under `src/`. The `notebooks/guard.ipynb` notebook imports those modules and presents metrics, propagation effects, and false-negative analysis step by step.
 
-## Kurulum
+## Installation
 
 ```bash
 git clone https://github.com/caglafikir/Med-Guard.git
@@ -64,23 +125,23 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Veri seti `data/dataset_shuffled.csv` altında yer alır ve en az şu sütunları içerir:
+The dataset is located at `data/dataset_shuffled.csv` and contains at least the following columns:
 
-| Sütun | Açıklama |
+| Column | Description |
 |---|---|
-| `request` | Kullanıcı isteğinin metni |
+| `request` | User request text |
 | `safety_level` | `safe` / `unsafe` |
-| `intent` | Yukarıdaki 9 niyet kategorisinden biri |
+| `intent` | One of the nine intent categories above |
 
-## Kullanım
+## Usage
 
 ```bash
 jupyter notebook notebooks/guard.ipynb
 ```
 
-Notebook; `src/` modüllerini kullanarak veriyi yükler, embedding'leri çıkarır, işaretli grafı kurar, modeli eğitir ve test setinde `classification_report`, karışıklık matrisi ile yanlış negatif (false negative) analizleri üretir.
+The notebook uses the `src/` modules to load the data, generate embeddings, build the signed graph, train the model, and produce a `classification_report`, confusion matrix, and false-negative analysis on the test set.
 
-`src/` modülleri bağımsız olarak da kullanılabilir, örneğin:
+The `src/` modules can also be used independently, for example:
 
 ```python
 from src.config import Config
@@ -90,14 +151,14 @@ cfg = Config()
 df = data.load_dataset(cfg.DATA_PATH)
 ```
 
-## Konfigürasyon
+## Configuration
 
-Önemli hiperparametreler `src/config.py` içindeki `Config` dataclass'ında tanımlıdır: graf komşuluk sayısı (`K_GRAPH`), pozitif/negatif benzerlik eşikleri, kayıp ağırlıkları (`LAMBDA_*`), propagation katsayıları (`PROP_ALPHA_*`) ve eğitim hiperparametreleri (`LR`, `EPOCHS`, vb.).
+Key hyperparameters are defined in the `Config` dataclass in `src/config.py`, including graph neighborhood size (`K_GRAPH`), positive and negative similarity thresholds, loss weights (`LAMBDA_*`), propagation coefficients (`PROP_ALPHA_*`), and training parameters (`LR`, `EPOCHS`, and others).
 
-## Lisans
+## License
 
-Bu proje [MIT lisansı](LICENSE) ile lisanslanmıştır.
+This project is licensed under the [MIT License](LICENSE).
 
-## Sorumluluk reddi
+## Disclaimer
 
-Bu proje bir araştırma/prototip çalışmasıdır ve gerçek tıbbi karar destek sistemlerinde doğrudan kullanılmak üzere tasarlanmamıştır.
+This project is a research prototype and is not intended for direct use in real-world medical decision-support systems.
