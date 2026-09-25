@@ -20,7 +20,7 @@ def is_selective_hard_negative(intent_i, intent_j, label_i, label_j, confusion_p
 
 
 def _make_row_normalized_sparse(rows, cols, wts, n, device):
-    """Row-normalized adjacency — sadece pozitif değerler."""
+    """Row-normalized adjacency — positive values only."""
     if len(rows) == 0:
         return torch.sparse_coo_tensor(
             torch.zeros((2, 0), dtype=torch.long, device=device),
@@ -77,7 +77,7 @@ def build_signed_graph_separate(X, y, intents, confusion_pairs, device,
                         neg_s_list.append(i)
                         neg_weights.append(sim)
 
-    # PyTorch edge tensors (pull/push loss için)
+    # PyTorch edge tensors (for the pull/push loss)
     pos_i_t = torch.tensor(pos_i_list, dtype=torch.long, device=device)
     pos_j_t = torch.tensor(pos_j_list, dtype=torch.long, device=device)
     neg_u_t = torch.tensor(neg_u_list, dtype=torch.long, device=device)

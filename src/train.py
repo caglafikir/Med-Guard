@@ -8,11 +8,12 @@ from .propagation import signed_embedding_propagation_separate
 def train_model(model, optimizer, criterion_intent,
                  X_train_t, y_train_t, int_train_t,
                  A_pos_t, A_neg_t, pos_i, pos_j, neg_u, neg_s,
-                 cfg, device):
+                 cfg, device, verbose=True):
 
-    print("="*70)
-    print("TRAINING: SIGNED GRAPH + SEPARATE EMBEDDING PROPAGATION + INDUCTIVE")
-    print("="*70)
+    if verbose:
+        print("="*70)
+        print("TRAINING: SIGNED GRAPH + SEPARATE EMBEDDING PROPAGATION + INDUCTIVE")
+        print("="*70)
 
     for epoch in range(cfg.EPOCHS):
         model.train()
@@ -56,7 +57,7 @@ def train_model(model, optimizer, criterion_intent,
         total_loss.backward()
         optimizer.step()
 
-        if (epoch + 1) % 25 == 0:
+        if verbose and (epoch + 1) % 25 == 0:
             print(f"Epoch {epoch+1:3d} | "
                   f"Total: {total_loss.item():.4f} | "
                   f"Safety: {loss_safety.item():.4f} | "

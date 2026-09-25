@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Optional
 
 import numpy as np
 
@@ -24,17 +25,20 @@ class Config:
     LAMBDA_INTENT: float = 0.5
     LAMBDA_PULL: float = 1.0
     LAMBDA_PUSH: float = 0.6
-    LAMBDA_PROP: float = 0.5
+    LAMBDA_PROP: float = 0.8
 
     POS_WEIGHT: float = 2.0
 
-    PROP_ALPHA_POS: float = 0.3
-    PROP_ALPHA_NEG: float = 0.2
+    PROP_ALPHA_POS: float = 0.5
+    PROP_ALPHA_NEG: float = 0.1
     PROP_K: int = 2
-    NEG_LAMBDA: float = 0.8
+    NEG_LAMBDA: float = 0.5
 
     K_INDUCTIVE: int = 10
-    INDUCTIVE_SIM_THR: float = 0.60
+    INDUCTIVE_SIM_THR: float = 0.8
+
+    INFER_PROP: bool = True                      
+    NEG_LAMBDA_INFER: Optional[float] = None     
 
     MIN_COVERAGE: float = 0.80
     LOW_GRID: np.ndarray = field(default_factory=lambda: np.arange(0.05, 0.46, 0.02))

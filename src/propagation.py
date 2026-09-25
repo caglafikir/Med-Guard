@@ -10,22 +10,19 @@ def signed_embedding_propagation_separate(H, A_pos, A_neg,
                                            neg_lambda=0.5):
 
     H_0 = H
-
     H_pos = H.detach()
-    for _ in range(K):
+    for _ in range(K - 1):
         msg_pos = torch.sparse.mm(A_pos, H_pos)
-        H_pos   = (1 - alpha_pos) * H_0.detach() + alpha_pos * msg_pos
+        H_pos = (1 - alpha_pos) * msg_pos + alpha_pos * H_0.detach()
 
     msg_pos_final = torch.sparse.mm(A_pos, H_pos.detach())
-    H_pos_final   = (1 - alpha_pos) * H_0 + alpha_pos * msg_pos_final
+    H_pos_final = (1 - alpha_pos) * msg_pos_final + alpha_pos * H_0
 
     with torch.no_grad():
         H_neg_msg = torch.sparse.mm(A_neg, H_pos_final.detach())
         delta_neg = alpha_neg * (H_neg_msg - H_pos_final.detach())
 
-    H_final = H_pos_final - neg_lambda * delta_neg
-
-    return H_final
+    return H_pos_final - neg_lambda * delta_neg
 
 
 def build_inductive_neighbourhood(X_query, X_train,
@@ -48,34 +45,24 @@ def build_inductive_neighbourhood(X_query, X_train,
 
     n_connected = sum(1 for n in nbr_indices if len(n) > 0)
     avg_nbr     = np.mean([len(n) for n in nbr_indices])
-    print(f"  Bağlanan: {n_connected}/{len(X_query)} | "
-          f"ort. komşu: {avg_nbr:.1f}")
+    print(f"  Connected: {n_connected}/{len(X_query)} | "
+          f"avg. neighbours: {avg_nbr:.1f}")
     return nbr_indices, nbr_weights
 
 
-def inductive_embedding_propagation(H_query, H_train_pos, H_train_neg_delta,
+def inductive_embedding_propagation(Hq, Htr_pos, Htr_delta,
                                      nbr_indices, nbr_weights, device,
-                                     alpha_pos=0.2, alpha_neg=0.1,
+                                     alpha_pos=0.2,
                                      neg_lambda=0.5):
 
-    H_out = H_query.clone()
-
-    for i in range(len(H_query)):
-        idx_list = nbr_indices[i]
-        wt_list  = nbr_weights[i]
-
-        if len(idx_list) == 0:
+    Ho = Hq.clone()
+    for i in range(len(Hq)):
+        il, wl = nbr_indices[i], nbr_weights[i]
+        if not il:
             continue
-
-        wts   = torch.tensor(wt_list, dtype=torch.float32, device=device)
-        wts   = wts / wts.sum()
-
-        msg_pos = (wts.unsqueeze(1) * H_train_pos[idx_list]).sum(0)
-
-        delta   = (wts.unsqueeze(1) * H_train_neg_delta[idx_list]).sum(0)
-
-        H_out[i] = ((1 - alpha_pos) * H_query[i]
-                    + alpha_pos * msg_pos
-                    - neg_lambda * alpha_neg * delta)
-
-    return H_out
+        wts = torch.tensor(wl, dtype=torch.float32, device=device)
+        wts = wts / wts.sum()
+        msg   = (wts.unsqueeze(1) * Htr_pos[il]).sum(0)
+        delta = (wts.unsqueeze(1) * Htr_delta[il]).sum(0)  
+        Ho[i] = alpha_pos * Hq[i] + (1 - alpha_pos) * msg - neg_lambda * delta
+    return Ho

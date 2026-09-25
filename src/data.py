@@ -1,3 +1,6 @@
+import hashlib
+import os
+
 import numpy as np
 import pandas as pd
 import torch
@@ -14,10 +17,21 @@ def load_dataset(data_path):
     return df
 
 
-def embed_texts(texts, embed_model_name):
+def embed_texts(texts, embed_model_name, cache_path=None):
+    if cache_path and not cache_path.endswith(".npz"):
+        cache_path += ".npz"
+    key = hashlib.md5((embed_model_name + "\n" + "\n".join(texts)).encode("utf-8")).hexdigest()
+
+    if cache_path and os.path.exists(cache_path):
+        cached = np.load(cache_path, allow_pickle=False)
+        if "key" in cached.files and str(cached["key"]) == key:
+            return cached["emb"], None
+
     encoder = SentenceTransformer(embed_model_name)
-    embeddings = encoder.encode(texts, show_progress_bar=True)
-    return np.array(embeddings), encoder
+    embeddings = np.array(encoder.encode(texts, show_progress_bar=True))
+    if cache_path:
+        np.savez(cache_path, emb=embeddings, key=np.array(key))
+    return embeddings, encoder
 
 
 def split_train_cal_test(embeddings, labels, intent_labels, texts,
