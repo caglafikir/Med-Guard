@@ -21,24 +21,24 @@ Let $H \in \mathbb{R}^{n \times d}$ be the learned node representations, $A_{+}$
 
 ### Positive propagation (pull)
 
-The positive graph repeatedly mixes each representation with messages from same-label neighbors while retaining part of the original representation:
+The positive graph repeatedly mixes each representation with messages from same-label neighbors while retaining part of the original representation as a teleport term:
 
 $$
 H_{+}^{(0)} = H_0 = H
 $$
 
 $$
-H_{+}^{(k+1)} = (1 - \alpha_{+})H_0 + \alpha_{+}A_{+}H_{+}^{(k)},
-\qquad k = 0, \ldots, K-1
+H_{+}^{(k+1)} = (1 - \alpha_{+})A_{+}H_{+}^{(k)} + \alpha_{+}H_0,
+\qquad k = 0, \ldots, K-2
 $$
 
-After the iterative updates, one final positive message is applied:
+After the iterative updates, one final positive message is applied, for a total of $K$ applications of $A_{+}$:
 
 $$
-H_{+} = (1 - \alpha_{+})H_0 + \alpha_{+}A_{+}H_{+}^{(K)}
+H_{+} = (1 - \alpha_{+})A_{+}H_{+}^{(K-1)} + \alpha_{+}H_0
 $$
 
-Here, a larger $\alpha_{+}$ gives neighbors more influence, while the residual term preserves the original node features.
+Here, $\alpha_{+}$ is the teleport / self-representation weight: a larger $\alpha_{+}$ retains more of the original node features, while $(1 - \alpha_{+})$ controls how much of the neighbor message is mixed in.
 
 ### Negative propagation (push)
 
@@ -62,7 +62,7 @@ In the implementation, the negative correction is computed without gradient trac
 
 ### Inductive propagation
 
-For an unseen query representation $h_q$, let $\mathcal{N}(q)$ be its training neighbors and let $w_{qi}$ be their normalized similarity weights. The inductive update is:
+For an unseen query representation $h_q$, let $\mathcal{N}(q)$ be its training neighbors and let $w_{qi}$ be their normalized similarity weights. The training-side quantities $h_{+,i}$ and $\Delta_{-,i}$ are the same $H_{+}$ and $\Delta_{-}$ computed above (so $\Delta_{-,i}$ already carries the $\alpha_{-}$ scaling). The inductive update is:
 
 $$
 m_{+}(q) = \sum_{i \in \mathcal{N}(q)} w_{qi}h_{+,i},
@@ -71,10 +71,10 @@ m_{+}(q) = \sum_{i \in \mathcal{N}(q)} w_{qi}h_{+,i},
 $$
 
 $$
-h_{q,\text{final}} = (1 - \alpha_{+})h_q + \alpha_{+}m_{+}(q) - \lambda_{-}\alpha_{-}\delta_{-}(q)
+h_{q,\text{final}} = \alpha_{+}h_q + (1 - \alpha_{+})m_{+}(q) - \lambda_{-}\delta_{-}(q)
 $$
 
-If no training neighbor passes the similarity threshold, the query representation is left unchanged.
+If no training neighbor passes the similarity threshold, the query representation is left unchanged. Note that inference can use a different push strength than training via `NEG_LAMBDA_INFER` (falling back to `NEG_LAMBDA` when unset).
 
 ## Intent categories
 
